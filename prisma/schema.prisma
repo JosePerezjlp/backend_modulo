@@ -1,0 +1,154 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Usuarios del dashboard (dueño / empleados)
+// ---------------------------------------------------------------------------
+enum UserRole {
+  ADMIN
+  EMPLEADO
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String
+  role      UserRole @default(EMPLEADO)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Productos (modulos de celulares)
+// ---------------------------------------------------------------------------
+model Product {
+  id             String   @id @default(uuid())
+  sku            String   @unique
+  name           String
+  brand          String // Samsung, Apple, Xiaomi, etc.
+  model          String // Galaxy S21, iPhone 13, etc.
+  description    String?
+  characteristics Json?   // { "color": "negro", "calidad": "OLED", "tipo conector": "..." }
+  price          Decimal  @db.Decimal(12, 2)
+  stock          Int      @default(0)
+  minStock       Int      @default(3)
+  maxStock       Int      @default(50)
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  images         ProductImage[]
+  orderItems     OrderItem[]
+  stockMovements StockMovement[]
+
+  @@index([brand, model])
+}
+
+model ProductImage {
+  id        String   @id @default(uuid())
+  url       String
+  isPrimary Boolean  @default(false)
+  order     Int      @default(0)
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Movimientos de stock (auditoria: entradas, salidas, reservas, devoluciones)
+// ---------------------------------------------------------------------------
+enum StockMovementType {
+  INGRESO // carga manual de stock
+  AJUSTE // correccion manual (+/-)
+  RESERVA // se reservo por una orden pendiente de pago
+  VENTA // orden confirmada / completada
+  DEVOLUCION // orden vencida o cancelada, vuelve al stock
+}
+
+model StockMovement {
+  id        String            @id @default(uuid())
+  productId String
+  product   Product           @relation(fields: [productId], references: [id])
+  type      StockMovementType
+  quantity  Int // positivo = entra a stock, negativo = sale
+  reason    String?
+  orderId   String?
+  order     Order?            @relation(fields: [orderId], references: [id])
+  createdAt DateTime          @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Pedidos (ecommerce)
+// ---------------------------------------------------------------------------
+enum OrderStatus {
+  PENDIENTE_PAGO // ticket generado, esperando transferencia, con expiración 24hs
+  PAGO_CONFIRMADO // el dueño verifico la transferencia
+  EN_PREPARACION // se está armando el pedido
+  COMPLETADO // entregado / enviado
+  CANCELADO // cancelado manualmente
+  VENCIDO // se venció el tiempo de pago, stock devuelto automáticamente
+}
+
+model Order {
+  id              String      @id @default(uuid())
+  ticketNumber    String      @unique // numero de ticket legible, ej: MOD-20260901-0001
+  status          OrderStatus @default(PENDIENTE_PAGO)
+
+  customerName    String
+  customerPhone   String
+  customerEmail   String?
+  customerNote    String?
+
+  subtotal        Decimal     @db.Decimal(12, 2)
+  total           Decimal     @db.Decimal(12, 2)
+
+  // datos bancarios copiados al momento de generar el ticket (por si cambian luego)
+  bankCbu         String
+  bankAlias       String?
+  bankHolder      String
+
+  expiresAt       DateTime // creado + 24hs (configurable)
+  paidConfirmedAt DateTime?
+  cancelledAt     DateTime?
+
+  items           OrderItem[]
+  stockMovements  StockMovement[]
+
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([status])
+  @@index([expiresAt])
+}
+
+model OrderItem {
+  id         String   @id @default(uuid())
+  orderId    String
+  order      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id])
+  productName String  // snapshot del nombre al momento de compra
+  quantity   Int
+  unitPrice  Decimal  @db.Decimal(12, 2)
+  subtotal   Decimal  @db.Decimal(12, 2)
+}
+
+// ---------------------------------------------------------------------------
+// Configuracion general (CBU / alias / titular de la cuenta destino)
+// ---------------------------------------------------------------------------
+model Settings {
+  id           String  @id @default("main")
+  bankCbu      String
+  bankAlias    String?
+  bankHolder   String
+  ticketHours  Int     @default(24)
+  updatedAt    DateTime @updatedAt
+}
